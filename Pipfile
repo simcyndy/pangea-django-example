@@ -6,3 +6,6 @@ name = "pypi"
 [packages]
 Django = "==4.1.4"
 "django-bootstrap4" = "==22.3"
+
+pangea-sdk = "*"
+django-environ = "*"
