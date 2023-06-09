@@ -1,0 +1,9 @@
+{% extends 'layouts/default/page.html' %} {% load bootstrap4 %} {% load i18n %}
+{% block content %}
+<h4>Upload</h4>
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %} {{ form.as_p }}
+  <button type="submit">Upload</button>
+</form>
+{% endblock %}

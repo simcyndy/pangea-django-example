@@ -4,14 +4,16 @@
 
 {% block content %}
 
-    {% if request.user.is_authenticated %}
-
-        {% trans 'Your username is' %} <b>{{ request.user.username }}</b>.
-
-    {% else %}
-
-        {% trans 'You are a guest.' %}
-
-    {% endif %}
+    <div class="content-area">
+        {% if request.user.is_authenticated %}
+            <h2>Welcome back!</h2>
+            <p>{% trans 'Your username is' %}: <b>{{ request.user.username }}</b>.</p>
+        {% else %}
+            <h2>Welcome Guest!</h2>
+            <p>{% trans 'You are currently not logged in.' %}</p>
+            <a href="{% url 'accounts:log_in' %}" class="btn btn-primary">{% trans 'Log in' %}</a>
+            <a href="{% url 'accounts:sign_up' %}" class="btn btn-secondary">{% trans 'Create an account' %}</a>
+        {% endif %}
+    </div>
 
 {% endblock %}

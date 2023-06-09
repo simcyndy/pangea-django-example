@@ -17,7 +17,9 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic import View, FormView
-from django.conf import settings
+from django.contrib import messages
+import hashlib
+# from django.conf.development import settings
 
 from .utils import (
     send_activation_email, send_reset_password_email, send_forgotten_username_email, send_activation_change_email,
@@ -26,9 +28,25 @@ from .forms import (
     SignInViaUsernameForm, SignInViaEmailForm, SignInViaEmailOrUsernameForm, SignUpForm,
     RestorePasswordForm, RestorePasswordViaEmailOrUsernameForm, RemindUsernameForm,
     ResendActivationCodeForm, ResendActivationCodeViaEmailForm, ChangeProfileForm, ChangeEmailForm,
+    DocumentForm
 )
-from .models import Activation
+from .models import Activation, Document
+from app.conf.development import settings
+from django.shortcuts import redirect, render
 
+from pangea.config import PangeaConfig
+from pangea.services import Audit, FileIntel
+from django.http import HttpResponseRedirect, HttpResponse, HttpResponseBadRequest
+
+config = PangeaConfig(domain=settings.PANGEA_DOMAIN)
+audit = Audit(settings.PANGEA_AUDIT_TOKEN, config=config) #creating Secure Audit Log object
+
+# Create the audit object within the class
+config = PangeaConfig(domain=settings.PANGEA_DOMAIN)
+audit = Audit(settings.PANGEA_AUDIT_TOKEN, config=config)
+
+# create File Intel object
+intel = FileIntel(settings.PANGEA_FILE_INTEL_TOKEN, config=config)
 
 class GuestOnlyView(View):
     def dispatch(self, request, *args, **kwargs):
@@ -38,6 +56,97 @@ class GuestOnlyView(View):
 
         return super().dispatch(request, *args, **kwargs)
 
+class UploadView(FormView):
+    template_name = 'accounts/upload_form.html'
+    
+    def get(self, request, *args, **kwargs):
+        template_name = 'accounts/upload_form.html'
+        form = DocumentForm()
+        return render(request, template_name, {'form': form})
+    
+    def post(self, request, *args, **kwargs):
+        template_name = 'accounts/upload_success.html'
+        form = DocumentForm(request.POST, request.FILES)
+        if form.is_valid():
+            file = request.FILES['file']
+            # Calculate checksum of the file
+            checksum = hashlib.md5(file.read()).hexdigest()
+            file.seek(0)  # Seek back to start of file after reading
+            
+            # Now save the document instance manually without committing to database
+            newdoc = form.save(commit=False)
+            newdoc.checksum = checksum  # Set the calculated checksum
+            newdoc.save()  # Now commit to the database
+
+            #calling Pangea's file intel service with the filepath
+            response = intel.filepathReputation(filepath= newdoc.file.path, provider="reversinglabs")
+
+            request.session['file_verdict'] = response.result.data.verdict
+
+            # Redirect to the document list after POST
+            return render(request, template_name, {'form': form})
+        else:
+            print("Form not valid!!")
+            template_name = 'accounts/upload_form.html'
+            message = 'The form is not valid. Fix the following error:'
+        return render(request, template_name, {'form': form})
+
+    
+    # def post(self, request, *args, **kwargs):
+    #     template_name = 'accounts/upload_success.html'
+    #     form = DocumentForm(request.POST, request.FILES)
+    #     if form.is_valid():
+    #         file = request.FILES['file']
+    #         # Calculate checksum of the file
+    #         checksum = hashlib.md5(file.read()).hexdigest()
+    #         file.seek(0)  # Seek back to start of file after reading
+    #         newdoc = Document(file=file, checksum=checksum)
+    #         newdoc.save()
+
+    #         #calling Pangea's file intel service with the filepath
+    #         response = intel.filepathReputation(filepath= newdoc.file.path, provider="reversinglabs")
+
+    #         request.session['file_verdict'] = response.result.data.verdict
+
+    #         # Redirect to the document list after POST
+    #         return render(request, template_name, {'form': form})
+    #     else:
+    #         print("Form not valid!!")
+    #         template_name = 'accounts/upload_form.html'
+    #         message = 'The form is not valid. Fix the following error:'
+    #     return render(request, template_name, {'form': form})
+
+
+from django.views.generic.list import ListView
+
+class DocumentListView(ListView):
+    model = Document
+    template_name = 'accounts/file_list.html'
+    context_object_name = 'documents'
+
+    def get_queryset(self):
+        return Document.objects.filter(user=self.request.user)
+    
+def serve_file(request, file_id):
+    try:
+        document = Document.objects.get(pk=file_id)
+    except Document.DoesNotExist:
+        return HttpResponse("File not found.", status=404)
+        
+    file_with_path = document.file.path
+    file_to_download = open(file_with_path, 'rb')
+    
+    # Recalculate the checksum
+    checksum = hashlib.md5(file_to_download.read()).hexdigest()
+    file_to_download.seek(0)  # Seek back to start of file after reading
+    
+    if document.checksum != checksum:
+        # The checksums do not match, alert the user.
+        return HttpResponseBadRequest("File integrity check failed. The file might have been changed.")
+        
+    response = HttpResponse(file_to_download, content_type='application/force-download') 
+    response['Content-Disposition'] = 'attachment; filename=%s' % document.file.name
+    return response
 
 class LogInView(GuestOnlyView, FormView):
     template_name = 'accounts/log_in.html'
@@ -62,27 +171,36 @@ class LogInView(GuestOnlyView, FormView):
         return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
-        request = self.request
+        try :
+            print('I entered the form')
+            self.audit('Entering')
+            request = self.request
 
-        # If the test cookie worked, go ahead and delete it since its no longer needed
-        if request.session.test_cookie_worked():
-            request.session.delete_test_cookie()
+            # If the test cookie worked, go ahead and delete it since its no longer needed
+            if request.session.test_cookie_worked():
+                request.session.delete_test_cookie()
 
-        # The default Django's "remember me" lifetime is 2 weeks and can be changed by modifying
-        # the SESSION_COOKIE_AGE settings' option.
-        if settings.USE_REMEMBER_ME:
-            if not form.cleaned_data['remember_me']:
-                request.session.set_expiry(0)
+            # The default Django's "remember me" lifetime is 2 weeks and can be changed by modifying
+            # the SESSION_COOKIE_AGE settings' option.
+            if settings.USE_REMEMBER_ME:
+                if not form.cleaned_data['remember_me']:
+                    request.session.set_expiry(0)
 
-        login(request, form.user_cache)
+            login(request, form.user_cache)
+            print('request', request)
+            if request.user.is_authenticated:
+                #calling Pangea's Secure Audit Log
+                audit.log("User: " +request.user.username+ " logged into the app!")
 
-        redirect_to = request.POST.get(REDIRECT_FIELD_NAME, request.GET.get(REDIRECT_FIELD_NAME))
-        url_is_safe = is_safe_url(redirect_to, allowed_hosts=request.get_host(), require_https=request.is_secure())
+            redirect_to = request.POST.get(REDIRECT_FIELD_NAME, request.GET.get(REDIRECT_FIELD_NAME))
+            url_is_safe = is_safe_url(redirect_to, allowed_hosts=request.get_host(), require_https=request.is_secure())
 
-        if url_is_safe:
-            return redirect(redirect_to)
+            if url_is_safe:
+                return redirect(redirect_to)
 
-        return redirect(settings.LOGIN_REDIRECT_URL)
+            return redirect(settings.LOGIN_REDIRECT_URL)
+        except Exception as e:
+            print(f'Exception in form_valid: {e}')
 
 
 class SignUpView(GuestOnlyView, FormView):

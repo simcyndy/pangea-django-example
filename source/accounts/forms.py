@@ -8,6 +8,8 @@ from django.contrib.auth.forms import UserCreationForm
 from django.utils import timezone
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
+from .models import Document
+import hashlib
 
 
 class UserCacheMixin:
@@ -215,3 +217,18 @@ class ChangeEmailForm(forms.Form):
 
 class RemindUsernameForm(EmailForm):
     pass
+
+
+class DocumentForm(forms.ModelForm):
+    class Meta:
+        model = Document
+        fields = ('file', 'checksum', )
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['checksum'].widget = forms.HiddenInput()  # Hide checksum field
+        self.fields['checksum'].required = False
+
+
+
+

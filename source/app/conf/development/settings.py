@@ -2,6 +2,7 @@ import os
 import warnings
 from django.utils.translation import gettext_lazy as _
 from os.path import dirname
+import environ
 
 warnings.simplefilter('error', DeprecationWarning)
 
@@ -11,7 +12,7 @@ CONTENT_DIR = os.path.join(BASE_DIR, 'content')
 SECRET_KEY = 'NhfTvayqggTBPswCXXhWaN69HuglgZIkM'
 
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost','0.0.0.0']
 
 SITE_ID = 1
 
@@ -138,3 +139,11 @@ LOCALE_PATHS = [
 ]
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+env = environ.Env()
+environ.Env.read_env()
+
+#Pangea
+PANGEA_DOMAIN = env('PANGEA_DOMAIN')
+PANGEA_AUDIT_TOKEN = env('PANGEA_AUDIT_TOKEN')
+PANGEA_FILE_INTEL_TOKEN = env('PANGEA_FILE_INTEL_TOKEN')
